@@ -4,8 +4,13 @@ import express from "express";
 import cors from "cors";
 import { MongoClient } from "mongodb";
 import { toNodeHandler } from "better-auth/node";
+
 import { createAuth } from "./auth.js";
 import { createRequireAuth } from "./middleware/requireAuth.js";
+import {
+  createEventsRouter,
+  ensureEventIndexes,
+} from "./routes/events.js";
 
 const app = express();
 
@@ -70,10 +75,17 @@ async function startServer() {
 
     console.log("MongoDB connected successfully.");
 
+    // Initialize Better Auth using the existing MongoDB connection.
     const auth = createAuth(database, client);
+    app.locals.auth = auth;
+
+    // Initialize JWT verification middleware.
     const requireAuth = createRequireAuth();
 
-    app.locals.auth = auth;
+    // Create the indexes required by event queries and duplicate-join protection.
+    await ensureEventIndexes(database);
+
+    console.log("Event indexes initialized successfully.");
 
     // Better Auth must run before express.json().
     app.all("/api/auth/*splat", toNodeHandler(auth));
@@ -107,7 +119,7 @@ async function startServer() {
       }
     });
 
-    // Protected endpoint: returns only a verified JWT identity.
+    // Protected user profile endpoint.
     app.get("/api/me", requireAuth, (req, res) => {
       res.set("Cache-Control", "no-store");
 
@@ -116,12 +128,23 @@ async function startServer() {
       });
     });
 
+    // Public and protected event endpoints.
+    app.use(
+      "/api/events",
+      createEventsRouter({
+        database,
+        requireAuth,
+      })
+    );
+
+    // Final 404 handler.
     app.use((req, res) => {
       res.status(404).json({
         message: "API route not found",
       });
     });
 
+    // Final error handler.
     app.use((error, req, res, next) => {
       if (res.headersSent) {
         return next(error);
@@ -149,6 +172,7 @@ async function startServer() {
     server = app.listen(PORT, () => {
       console.log(`Kindred API running at http://localhost:${PORT}`);
       console.log("Better Auth initialized successfully.");
+      console.log("Kindred Events API initialized successfully.");
     });
 
     server.on("error", async (error) => {
@@ -173,7 +197,7 @@ async function startServer() {
     } else if (error.name === "MongoServerSelectionError") {
       console.error("Check Atlas availability and network access.");
     } else {
-      console.error("Check the server environment and Better Auth configuration.");
+      console.error("Check the server environment and application configuration.");
     }
 
     if (client) {
