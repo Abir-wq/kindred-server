@@ -217,9 +217,12 @@ export function createEventsRouter({
   // PROTECTED: Events created by the authenticated user.
   router.get("/mine", requireAuth, async (req, res) => {
     const documents = await events
-      .find({
-        "createdBy.userId": req.user.id,
-      })
+     .find({
+  "createdBy.userId": req.user.id,
+  eventDate: {
+    $gt: new Date(),
+  },
+})
       .sort({ eventDate: 1 })
       .toArray();
 
