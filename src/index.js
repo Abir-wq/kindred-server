@@ -1,16 +1,15 @@
-
+import {
+  createEventsRouter,
+  ensureEventIndexes,
+} from "./routes/events.js";
+import newsletterRoutes from "./routes/newsletter.js";
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import { MongoClient } from "mongodb";
 import { toNodeHandler } from "better-auth/node";
-
 import { createAuth } from "./auth.js";
 import { createRequireAuth } from "./middleware/requireAuth.js";
-import {
-  createEventsRouter,
-  ensureEventIndexes,
-} from "./routes/events.js";
 
 const app = express();
 
@@ -75,23 +74,26 @@ async function startServer() {
 
     console.log("MongoDB connected successfully.");
 
-    // Initialize Better Auth using the existing MongoDB connection.
     const auth = createAuth(database, client);
-    app.locals.auth = auth;
-
-    // Initialize JWT verification middleware.
     const requireAuth = createRequireAuth();
 
-    // Create the indexes required by event queries and duplicate-join protection.
-    await ensureEventIndexes(database);
-
-    console.log("Event indexes initialized successfully.");
+    app.locals.auth = auth;
 
     // Better Auth must run before express.json().
     app.all("/api/auth/*splat", toNodeHandler(auth));
 
     // Parse JSON for regular Express API routes.
     app.use(express.json({ limit: "1mb" }));
+    app.use("/api/newsletter", newsletterRoutes);
+    await ensureEventIndexes(database);
+
+app.use(
+  "/api/events",
+  createEventsRouter({
+    database,
+    requireAuth,
+  })
+);
 
     app.get("/", (req, res) => {
       res.json({
@@ -119,7 +121,7 @@ async function startServer() {
       }
     });
 
-    // Protected user profile endpoint.
+    // Protected endpoint: returns only a verified JWT identity.
     app.get("/api/me", requireAuth, (req, res) => {
       res.set("Cache-Control", "no-store");
 
@@ -128,23 +130,12 @@ async function startServer() {
       });
     });
 
-    // Public and protected event endpoints.
-    app.use(
-      "/api/events",
-      createEventsRouter({
-        database,
-        requireAuth,
-      })
-    );
-
-    // Final 404 handler.
     app.use((req, res) => {
       res.status(404).json({
         message: "API route not found",
       });
     });
 
-    // Final error handler.
     app.use((error, req, res, next) => {
       if (res.headersSent) {
         return next(error);
@@ -172,7 +163,6 @@ async function startServer() {
     server = app.listen(PORT, () => {
       console.log(`Kindred API running at http://localhost:${PORT}`);
       console.log("Better Auth initialized successfully.");
-      console.log("Kindred Events API initialized successfully.");
     });
 
     server.on("error", async (error) => {
@@ -197,7 +187,7 @@ async function startServer() {
     } else if (error.name === "MongoServerSelectionError") {
       console.error("Check Atlas availability and network access.");
     } else {
-      console.error("Check the server environment and application configuration.");
+      console.error("Check the server environment and Better Auth configuration.");
     }
 
     if (client) {
